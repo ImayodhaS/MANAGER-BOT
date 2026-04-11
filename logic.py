@@ -1,128 +1,126 @@
 import sqlite3
-from config import DATABASE
+from datetime import datetime
+from config import DATABASE 
+import os
+import cv2
 
-skills = [ (_,) for _ in (['Python', 'SQL', 'API', 'Discord'])]
-statuses = [ (_,) for _ in (['Prototipe', 'Dalam Pengembangan', 'Selesai', 'Diperbarui', 'Ditinggalkan/Tidak Dilanjutkan'])]
-
-class DB_Manager:
+class DatabaseManager:
     def __init__(self, database):
         self.database = database
 
     def create_tables(self):
         conn = sqlite3.connect(self.database)
         with conn:
-            conn.execute('''CREATE TABLE projects (
-                            project_id INTEGER PRIMARY KEY,
-                            user_id INTEGER,
-                            project_name TEXT NOT NULL,
-                            description TEXT,
-                            url TEXT,
-                            status_id INTEGER,
-                            FOREIGN KEY(status_id) REFERENCES status(status_id)
-                        )''') 
-            conn.execute('''CREATE TABLE skills (
-                            skill_id INTEGER PRIMARY KEY,
-                            skill_name TEXT
-                        )''')
-            conn.execute('''CREATE TABLE project_skills (
-                            project_id INTEGER,
-                            skill_id INTEGER,
-                            FOREIGN KEY(project_id) REFERENCES projects(project_id),
-                            FOREIGN KEY(skill_id) REFERENCES skills(skill_id)
-                        )''')
-            conn.execute('''CREATE TABLE status (
-                            status_id INTEGER PRIMARY KEY,
-                            status_name TEXT
-                        )''')
-            conn.commit()
-        print("Database created successfully")
+            conn.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                user_name TEXT
+            )
+        ''')
 
-    def __executemany(self, sql, data):
+            conn.execute('''
+            CREATE TABLE IF NOT EXISTS prizes (
+                prize_id INTEGER PRIMARY KEY,
+                image TEXT,
+                used INTEGER DEFAULT 0
+            )
+        ''')
+
+            conn.execute('''
+            CREATE TABLE IF NOT EXISTS winners (
+                user_id INTEGER,
+                prize_id INTEGER,
+                win_time TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(user_id),
+                FOREIGN KEY(prize_id) REFERENCES prizes(prize_id)
+            )
+        ''')
+
+            conn.commit()
+
+    def add_user(self, user_id, user_name):
         conn = sqlite3.connect(self.database)
         with conn:
-            conn.executemany(sql, data)
+            conn.execute('INSERT INTO users VALUES (?, ?)', (user_id, user_name))
             conn.commit()
 
-    def __select_data(self, sql, data = tuple()):
+    def add_prize(self, data):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            conn.executemany('''INSERT INTO prizes (image) VALUES (?)''', data)
+            conn.commit()
+
+    def add_winner(self, user_id, prize_id):
+        win_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        conn = sqlite3.connect(self.database)
+        with conn:
+            cur = conn.cursor() 
+            cur.execute("SELECT * FROM winners WHERE user_id = ? AND prize_id = ?", (user_id, prize_id))
+            if cur.fetchall():
+                return 0
+            else:
+                conn.execute('''INSERT INTO winners (user_id, prize_id, win_time) VALUES (?, ?, ?)''', (user_id, prize_id, win_time))
+                conn.commit()
+                return 1
+
+  
+    def mark_prize_used(self, prize_id):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            conn.execute('''UPDATE prizes SET used = 1 WHERE prize_id = ?''', (prize_id,))
+            conn.commit()
+
+
+    def get_users(self):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            cur = conn.cursor() 
+            cur.execute("SELECT * FROM users")
+            return [x[0] for x in cur.fetchall()] 
+        
+    def get_prize_img(self, prize_id):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            cur = conn.cursor() 
+            cur.execute("SELECT image FROM prizes WHERE prize_id = ?", (prize_id,))
+            return cur.fetchall()[0][0]
+
+    def get_random_prize(self):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            cur = conn.cursor() 
+            cur.execute("SELECT * FROM prizes WHERE used = 0 ORDER BY RANDOM()")
+            return cur.fetchall()[0]
+    
+    def get_winners_count(self, prize_id):
         conn = sqlite3.connect(self.database)
         with conn:
             cur = conn.cursor()
-            cur.execute(sql, data)
-            return cur.fetchall()
-            
-
-    def default_insert(self):
-        sql = 'INSERT OR IGNORE INTO skills (skill_name) values(?)'
-        data = skills
-        self.__executemany(sql, data)
-        sql = 'INSERT OR IGNORE INTO status (status_name) values(?)'
-        data = statuses
-        self.__executemany(sql, data)
-
-
-    def insert_project(self, data):
-        sql = 'INSERT OR IGNORE INTO projects (user_id, project_name, url, status_id) values(?, ?, ?, ?)'
-        self.__executemany(sql, data)
-
-    def insert_skill(self, user_id, project_name, skill):
-        sql = 'SELECT project_id FROM projects WHERE project_name = ? AND user_id = ?'
-        project_id = self.__select_data(sql, (project_name, user_id))[0][0]
-        skill_id = self.__select_data('SELECT skill_id FROM skills WHERE skill_name = ?', (skill,))[0][0]
-        data = [(project_id,skill_id)]
-        sql = 'INSERT OR IGNORE INTO project_skills VALUES (?, ?)'
-        self.__executemany(sql, data)
-
-  
-    def get_statuses(self):
-        sql='SELECT status_name from status'
-        return self.__select_data(sql)
+            cur.execute('SELECT COUNT(user_id) FROM winners WHERE prize_id = ?', (prize_id, ))
+            return cur.fetchall()[0][0]
         
-    def get_status_id(self, status_name):
-        sql = 'SELECT status_id FROM status WHERE status_name = ?'
-        res = self.__select_data(sql, (status_name,))
-        if res: return res[0][0]
-        else: return None
-
-    def get_projects(self, user_id):
-        return self.__select_data(sql='SELECT * FROM projects WHERE user_id = ?', data = (user_id,))
-
-    def get_project_id(self, project_name, user_id):
-        return self.__select_data(sql='SELECT project_id FROM projects WHERE project_name = ? AND user_id = ?  ', data = (project_name, user_id,))[0][0]
-
-    def get_skills(self):
-        return self.__select_data(sql='SELECT * FROM skills')
-    
-    def get_project_skills(self, project_name):
-        res = self.__select_data(sql='''SELECT skill_name FROM projects 
-JOIN project_skills ON projects.project_id = project_skills.project_id 
-JOIN skills ON skills.skill_id = project_skills.skill_id 
-WHERE project_name = ?''', data = (project_name,) )
-        return ', '.join([x[0] for x in res])
-    
-    def get_project_info(self, user_id, project_name):
-        sql = """
-SELECT project_name, description, url, status_name FROM projects 
-JOIN status ON
-status.status_id = projects.status_id
-WHERE project_name=? AND user_id=?
-"""
-        return self.__select_data(sql=sql, data = (project_name, user_id))
-    
-
-    def update_projects(self, param, data):
-        self.__executemany(f"UPDATE projects SET {param} = ? WHERE project_name = ? AND user_id = ?", [data]) # data ('atr', 'mew', 'name', 'user_id')
-
-
-    def delete_project(self, user_id, project_id):
-        sql = "DELETE FROM projects WHERE user_id = ? AND project_id = ? "
-        self.__executemany(sql, [(user_id, project_id)])
-
-    def delete_skill(self, project_id, skill_id):
-        sql = "DELETE FROM skills WHERE skill_id = ? AND project_id = ? "
-        self.__executemany(sql, [(skill_id, project_id)])
-
+    def get_rating(self):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            cur = conn.cursor()
+            cur.execute('''
+        SELECT user_name, count(winners.prizes_id) as total FROM users
+        INNER JOIN winners ON users.user_id = winners.user_id
+        ORDER BY total DESC
+        LIMIT 10
+        ''')
+            return cur.fetchall()
+  
+def hide_img(img_name):
+    image = cv2.imread(f'img/{img_name}')
+    blurred_image = cv2.GaussianBlur(image, (15, 15), 0)
+    pixelated_image = cv2.resize(blurred_image, (30, 30), interpolation=cv2.INTER_NEAREST)
+    pixelated_image = cv2.resize(pixelated_image, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+    cv2.imwrite(f'hidden_img/{img_name}', pixelated_image)
 
 if __name__ == '__main__':
-    manager = DB_Manager(DATABASE)
+    manager = DatabaseManager(DATABASE)
     manager.create_tables()
-    manager.default_insert()
+    prizes_img = os.listdir('img')
+    data = [(x,) for x in prizes_img]
+    manager.add_prize(data)
