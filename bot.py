@@ -3,6 +3,8 @@ from discord.ext import commands, tasks
 from logic import DatabaseManager, hide_img
 from config import TOKEN, DATABASE
 import os
+from logic import create_collage
+import cv2
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -27,7 +29,11 @@ async def start(ctx):
 @tasks.loop(minutes=1)
 async def send_message():
     for user_id in manager.get_users():
-        prize_id, img = manager.get_random_prize()[:2]
+        prize = manager.get_random_prize()
+        if prize is None:
+            print("Tidak ada hadiah tersisa!")
+            return
+        prize_id, img = prize[:2]
         hide_img(img)
         user = await bot.fetch_user(user_id) 
         if user:
@@ -48,7 +54,38 @@ async def rating(ctx):
     res = [f'| @{x[0]:<11} | {x[1]:<11}|\n{"_"*26}' for x in res]
     res = '\n'.join(res)
     res = f'|USER_NAME    |COUNT_PRIZE|\n{"_"*26}\n' + res
-    await ctx.send(f"```\n{res}\n```")
+    await ctx.send(f"\n{res}\n")
+
+@bot.command()
+async def getmyscore(ctx):
+    user_id = ctx.author.id
+
+    info = manager.get_winners_img(user_id)
+    prizes = [x[0] for x in info]
+
+    all_images = os.listdir('img')
+
+    image_paths = []
+    for img in all_images:
+        if img in prizes:
+            image_paths.append(f'img/{img}')
+        else:
+            image_paths.append(f'hidden_img/{img}')
+
+    collage = create_collage(image_paths)
+
+    if collage is None:
+        await ctx.send("ngga ada gambar")
+        return
+
+    output_path = f'collage_{user_id}.png'
+    cv2.imwrite(output_path, collage)
+
+    with open(output_path, 'rb') as f:
+        file = discord.File(f)
+        await ctx.send("koleksimu", file=file)
+
+    os.remove(output_path)
 
 @bot.event
 async def on_interaction(interaction):
@@ -67,19 +104,6 @@ async def on_interaction(interaction):
                 await interaction.response.send_message(content="Kamu sudah mendapatkan gambar!", ephemeral=True)
         else:
             await interaction.response.send_message(content="Maaf, seseorang sudah mendapatkan gambar ini.", ephemeral=True)
-
-@bot.event
-async def on_interaction(interaction):
-    if interaction.type == discord.InteractionType.component:
-        custom_id = interaction.data['custom_id']
-        user_id = interaction.user.id
-        img = manager.get_prize_img(custom_id)
-        if manager.add_winner(user_id, custom_id):
-            with open(f'img/{img}', 'rb') as photo:
-                file = discord.File(photo)
-                await interaction.response.send_message(file=file, content="Selamat, kamu mendapatkan gambar!")
-        else:
-            await interaction.response.send_message(content="Maaf, gambar sudah diambil oleh pengguna lain.", ephemeral=True)
 
 @bot.event
 async def on_ready():
